@@ -1,0 +1,9 @@
+#conda
+pytorch
+pyg
+
+#pip
+pennylane
+pennylane-lightning
+
+python-dotenv

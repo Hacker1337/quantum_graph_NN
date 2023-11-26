@@ -1,3 +1,9 @@
 
 /rolos_workflow_data
 /.rolos_storages
+.env
+data
+**/checkpoints
+**/wandb
+logs
+wandb.env
