@@ -21,8 +21,9 @@ def str2bool(v):
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
 parser.add_argument('--lr', default=0.01)
-parser.add_argument('--batch_size', default=1)
-parser.add_argument('--num_epochs', default=300)
+parser.add_argument('--batch_size', type=int, default=1)
+parser.add_argument('--num_epochs', type=int, default=300)
+parser.add_argument('--feature_idx', type=int, default=0)
 parser.add_argument('--quantum', type=str2bool, default=True)
 
 args = parser.parse_args()
@@ -88,6 +89,8 @@ dataloader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
 test_dataloader = DataLoader(test_ds, batch_size=1)
 criterion = nn.MSELoss()
 
+model_params = {}
+
 if not quantum:
     # Define a simple Graph Neural Network (GNN) model
     class GNNModel(nn.Module):
@@ -106,9 +109,9 @@ if not quantum:
             return x
 
     # Initialize and train the GNN model
-    model = GNNModel(filtered_dataset[0].num_features, hidden_dim=3)
+    model_params["c_hidden_dim"] = 3
+    model = GNNModel(filtered_dataset[0].num_features, hidden_dim=model_params["c_hidden_dim"])
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
 
     n_params = sum([p.numel() for p in model.parameters()])
     print("number of parameters is ", n_params)
@@ -218,6 +221,8 @@ run = wandb.init(
         "model": "quantum" if quantum else "classical",
         "num_nodes": max_nodes,
         "batch_size": batch_size,
+        "model_params": model_params,
+        "predict_feature": args.feature_idx,
     },
     save_code=True)
 wandb.run.log_code("src")
@@ -226,7 +231,7 @@ from tqdm.auto import tqdm
 import os
 
 run_id = wandb.run.name[wandb.run.name.rfind("-")+1:]
-chkp_folder = f"logs/{'q' if quantum else 'c'}_{n_params}p_wandb_id={run_id}"
+chkp_folder = f"output/logs/{'q' if quantum else 'c'}_{n_params}p_wandb_id={run_id}"
 
 os.makedirs(chkp_folder, exist_ok=False)
 
@@ -238,7 +243,7 @@ for epoch in tqdm(range(0, num_epochs)):
     for data in dataloader:
         optimizer.zero_grad()
         output = model(data)
-        loss = criterion(output, data.y[:, 0:1].float())
+        loss = criterion(output, data.y[:, args.feature_idx:args.feature_idx+1].float())
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
@@ -249,7 +254,7 @@ for epoch in tqdm(range(0, num_epochs)):
     for data in test_dataloader:
         with torch.no_grad():
             output = model(data)
-            loss = criterion(output, data.y[:, 0:1].float())
+            loss = criterion(output, data.y[:, args.feature_idx:args.feature_idx+1].float())
         total_loss += loss.item()
     avg_loss_test = total_loss / len(test_dataloader)
 
@@ -265,7 +270,7 @@ from sklearn.metrics import r2_score
 
 # batch_size = 1
 # dataloader = DataLoader(filtered_dataset, batch_size=batch_size, shuffle=True)
-feature_idx = 0
+feature_idx = args.feature_idx
 
 model.eval()
 
