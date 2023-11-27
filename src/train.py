@@ -31,7 +31,6 @@ lr = args.lr
 batch_size = args.batch_size
 num_epochs = args.num_epochs
 quantum = args.quantum
-print(quantum)
 
 
 dotenv.load_dotenv("wandb.env")
@@ -80,9 +79,13 @@ import torch.nn.functional as F
 
 from torch_geometric.nn import global_mean_pool, GCNConv
 
-
+torch.manual_seed(0)
+generator = torch.Generator().manual_seed(42)
+test_len = len(filtered_dataset)//5
+train_ds, test_ds = torch.utils.data.random_split(filtered_dataset, [len(filtered_dataset) - test_len, test_len], generator=generator)
 # Create a DataLoader for the filtered dataset
-dataloader = DataLoader(filtered_dataset, batch_size=batch_size, shuffle=True)
+dataloader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+test_dataloader = DataLoader(test_ds, batch_size=1)
 criterion = nn.MSELoss()
 
 if not quantum:
@@ -103,7 +106,7 @@ if not quantum:
             return x
 
     # Initialize and train the GNN model
-    model = GNNModel(filtered_dataset[0].num_features, hidden_dim=10)
+    model = GNNModel(filtered_dataset[0].num_features, hidden_dim=3)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
 
@@ -222,8 +225,8 @@ wandb.run.log_code("src")
 from tqdm.auto import tqdm 
 import os
 
-
-chkp_folder = f"logs/{'q' if quantum else 'c'}_{n_params}p_wandb_id={wandb.run.id}"
+run_id = wandb.run.name[wandb.run.name.rfind("-")+1:]
+chkp_folder = f"logs/{'q' if quantum else 'c'}_{n_params}p_wandb_id={run_id}"
 
 os.makedirs(chkp_folder, exist_ok=False)
 
@@ -240,42 +243,60 @@ for epoch in tqdm(range(0, num_epochs)):
         optimizer.step()
         total_loss += loss.item()
     avg_loss = total_loss / len(dataloader)
-    print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}')
-    wandb.log({"epoch": epoch+1, "loss": avg_loss})
+
+    model.eval()
+    total_loss = 0
+    for data in test_dataloader:
+        with torch.no_grad():
+            output = model(data)
+            loss = criterion(output, data.y[:, 0:1].float())
+        total_loss += loss.item()
+    avg_loss_test = total_loss / len(test_dataloader)
+
+
+    wandb.log({"epoch": epoch+1, "loss": avg_loss, "test_loss": avg_loss_test})
     torch.save(model.state_dict(), os.path.join(chkp_folder, f'chpt_{epoch+1}.pth'))
 
 
 # %%
-wandb.finish()
-
 # ## Predictions visualization
 
-# %%
-import matplotlib.pyplot as plt
+from sklearn.metrics import r2_score
 
+# batch_size = 1
+# dataloader = DataLoader(filtered_dataset, batch_size=batch_size, shuffle=True)
+feature_idx = 0
 
-def visualize_predictions(model, dataloader, feature_idx):
-    predictions = []
-    answers = []
-    model.eval()
-    with torch.no_grad():
-        for data in dataloader:
-            output = model(data)
-            predictions.append(output)
-            answers.append(data.y[:, feature_idx:feature_idx+1])
-    predictions = torch.cat(predictions)
-    answers = torch.cat(answers)
-    plt.plot(answers, predictions, "o")
-    plt.xlabel("correct answer")
-    plt.ylabel("prediction")
-    mse = criterion(answers, predictions)
-    print(mse)
-    return predictions, answers
+model.eval()
 
-# %%
-batch_size = 1
-dataloader = DataLoader(filtered_dataset, batch_size=batch_size, shuffle=True)
+predictions = []
+answers = []
+with torch.no_grad():
+    for data in dataloader:
+        output = model(data)
+        predictions.append(output)
+        answers.append(data.y[:, feature_idx:feature_idx+1])
+predictions = torch.cat(predictions)
+answers = torch.cat(answers)
+mse = criterion(answers, predictions).item()
+print("MSE loss:", round(mse, 3))
+r2 = r2_score(answers, predictions)
+print("R2 score:", round(r2, 6))
 
-# %%
-predictions, answers  = visualize_predictions(model, dataloader, 0)
-plt.title("Q model, 26 params")
+run.summary["r2_train"] = r2
+
+predictions = []
+answers = []
+with torch.no_grad():
+    for data in test_dataloader:
+        output = model(data)
+        predictions.append(output)
+        answers.append(data.y[:, feature_idx:feature_idx+1])
+predictions = torch.cat(predictions)
+answers = torch.cat(answers)
+mse = criterion(answers, predictions).item()
+print("MSE test loss:", round(mse, 3))
+r2 = r2_score(answers, predictions)
+print("R2 test score:", round(r2, 6))
+
+run.summary["r2_test"] = r2
