@@ -3,6 +3,7 @@ from torch import nn
 import dotenv
 import wandb
 import os
+from math import floor
 
 import argparse
 
@@ -25,6 +26,10 @@ parser.add_argument('--batch_size', type=int, default=1)
 parser.add_argument('--num_epochs', type=int, default=300)
 parser.add_argument('--feature_idx', type=int, default=0)
 parser.add_argument('--quantum', type=str2bool, default=True)
+parser.add_argument('--dataset_frac', type=float, default=1.0, help="Fraction of the train dataset to use")
+parser.add_argument('--model_params_seed', type=int, default=0)
+parser.add_argument('--dataset_reduce_seed', type=int, default=42)
+parser.add_argument('--tr_test_split_seed', type=int, default=42)
 
 args = parser.parse_args()
 
@@ -80,10 +85,20 @@ import torch.nn.functional as F
 
 from torch_geometric.nn import global_mean_pool, GCNConv
 
-torch.manual_seed(0)
-generator = torch.Generator().manual_seed(42)
+generator = torch.Generator().manual_seed(args.tr_test_split_seed)
 test_len = len(filtered_dataset)//5
-train_ds, test_ds = torch.utils.data.random_split(filtered_dataset, [len(filtered_dataset) - test_len, test_len], generator=generator)
+full_train_len = len(filtered_dataset) - test_len
+
+train_ds_full, test_ds = torch.utils.data.random_split(filtered_dataset, [full_train_len, test_len], generator=generator)
+
+selected_train_len = floor(full_train_len*args.dataset_frac + 1e-9)
+print(f"Training on {selected_train_len} out of {full_train_len} samples.")
+
+generator2 = torch.Generator().manual_seed(args.dataset_reduce_seed)
+train_ds, _ = torch.utils.data.random_split(train_ds_full, [selected_train_len, full_train_len - selected_train_len], generator=generator2) # reduce the dataset
+
+torch.manual_seed(args.model_params_seed)
+
 # Create a DataLoader for the filtered dataset
 dataloader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
 test_dataloader = DataLoader(test_ds, batch_size=1)
@@ -153,6 +168,7 @@ else:
         
 
     n_layers = 3
+    model_params["n_layers"] = n_layers
     def circuit(inputs, params, edge_weights, atoms_weight: list[5]):
         data = inputs
         num_atoms = data.x.shape[0]
@@ -223,6 +239,7 @@ run = wandb.init(
         "batch_size": batch_size,
         "model_params": model_params,
         "predict_feature": args.feature_idx,
+        "dataset_fraction": args.dataset_frac,
     },
     save_code=True)
 wandb.run.log_code("src")
@@ -231,7 +248,7 @@ from tqdm.auto import tqdm
 import os
 
 run_id = wandb.run.name[wandb.run.name.rfind("-")+1:]
-chkp_folder = f"output/logs/{'q' if quantum else 'c'}_{n_params}p_wandb_id={run_id}"
+chkp_folder = f"output/logs/{'q' if quantum else 'c'}_{n_params}p_wandb_id={wandb.run.name}"
 
 os.makedirs(chkp_folder, exist_ok=False)
 
