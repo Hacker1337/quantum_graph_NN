@@ -1,3 +1,12 @@
+# %%
+from sklearn.metrics import r2_score
+from tqdm.auto import tqdm
+from torch_geometric.nn import global_mean_pool, GCNConv
+import torch.nn.functional as F
+import torch.nn as nn
+from torch_geometric.transforms import Compose, NormalizeScale, NormalizeFeatures
+from torch_geometric.datasets import QM9
+from torch_geometric.loader import DataLoader
 import torch
 from torch import nn
 import dotenv
@@ -9,7 +18,8 @@ import argparse
 
 
 parser = argparse.ArgumentParser(
-                    prog='train model',)
+    prog='train model',)
+
 
 def str2bool(v):
     if isinstance(v, bool):
@@ -21,12 +31,14 @@ def str2bool(v):
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
+
 parser.add_argument('--lr', default=0.01)
 parser.add_argument('--batch_size', type=int, default=1)
 parser.add_argument('--num_epochs', type=int, default=300)
-parser.add_argument('--feature_idx', type=int, default=0)
+parser.add_argument('--feature_idx', type=int, default=2)
 parser.add_argument('--quantum', type=str2bool, default=True)
-parser.add_argument('--dataset_frac', type=float, default=1.0, help="Fraction of the train dataset to use")
+parser.add_argument('--dataset_frac', type=float, default=0.67,
+                    help="Fraction of the train dataset to use")
 parser.add_argument('--model_params_seed', type=int, default=0)
 parser.add_argument('--dataset_reduce_seed', type=int, default=42)
 parser.add_argument('--tr_test_split_seed', type=int, default=42)
@@ -39,7 +51,7 @@ num_epochs = args.num_epochs
 quantum = args.quantum
 
 
-dotenv.load_dotenv("wandb.env")
+dotenv.read_dotenv("wandb.env")
 
 wandb.login(key=os.environ["api_key"])
 wandb_prj_name = "graphQNN"
@@ -47,9 +59,6 @@ wandb_prj_name = "graphQNN"
 # ## Dataset preprocessing
 
 # %%
-from torch_geometric.loader import DataLoader
-from torch_geometric.datasets import QM9
-from torch_geometric.transforms import Compose, NormalizeScale, NormalizeFeatures
 
 
 # Load the QM9 dataset and filter graphs with less than 8 nodes
@@ -79,23 +88,22 @@ for data in filtered_dataset:
 # %%
 
 # %%
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
-from torch_geometric.nn import global_mean_pool, GCNConv
 
 generator = torch.Generator().manual_seed(args.tr_test_split_seed)
 test_len = len(filtered_dataset)//5
 full_train_len = len(filtered_dataset) - test_len
 
-train_ds_full, test_ds = torch.utils.data.random_split(filtered_dataset, [full_train_len, test_len], generator=generator)
+train_ds_full, test_ds = torch.utils.data.random_split(
+    filtered_dataset, [full_train_len, test_len], generator=generator)
 
 selected_train_len = floor(full_train_len*args.dataset_frac + 1e-9)
 print(f"Training on {selected_train_len} out of {full_train_len} samples.")
 
 generator2 = torch.Generator().manual_seed(args.dataset_reduce_seed)
-train_ds, _ = torch.utils.data.random_split(train_ds_full, [selected_train_len, full_train_len - selected_train_len], generator=generator2) # reduce the dataset
+train_ds, _ = torch.utils.data.random_split(
+    train_ds_full, [selected_train_len, full_train_len - selected_train_len],
+    generator=generator2)  # reduce the dataset
 
 torch.manual_seed(args.model_params_seed)
 
@@ -132,14 +140,12 @@ if not quantum:
     print("number of parameters is ", n_params)
 
 # %%
-else:
+if quantum:
     # ## Quantum Network
 
-    # %%
     import pennylane as qml
     import pennylane.numpy as np
 
-    # %%
     # final stage
     from typing import Literal
     import torch
@@ -157,7 +163,7 @@ else:
 
     def edged_entengling_layer(edge_index, rot_param):
         for i in range(edge_index.shape[1]):
-            qml.IsingYY(rot_param, wires=[edge_index[0,i], edge_index[1,i]])
+            qml.IsingYY(rot_param, wires=[edge_index[0, i], edge_index[1, i]])
 
     def measurement(n_qubits):
         return [qml.expval(qml.PauliZ(i)) for i in range(n_qubits)]
@@ -165,10 +171,10 @@ else:
     def parametrised_rotations(angles, wires):
         for w in wires:
             qml.Rot(*angles, w)
-        
 
     n_layers = 3
     model_params["n_layers"] = n_layers
+
     def circuit(inputs, params, edge_weights, atoms_weight: list[5]):
         data = inputs
         num_atoms = data.x.shape[0]
@@ -186,35 +192,34 @@ else:
         def init_weight(self, weights_shape):
             weights = {}
             for name, shape in weights_shape.items():
-                t = torch.nn.Parameter(torch.rand(*shape, requires_grad=True).float()*2*np.pi, requires_grad=True)
+                t = torch.nn.Parameter(torch.rand(
+                    *shape, requires_grad=True).float()*2*np.pi, requires_grad=True)
                 self.register_parameter(name, t)
                 weights[name] = t
             return weights
+
         def __init__(self, readout: Literal["global", "local"], max_qubits: int):
             super().__init__()
             device = qml.device("lightning.qubit", wires=max_qubits)
-            self.qnode = qml.QNode(circuit, device)
-            weights_shape = {"params": [2*n_layers, 3], "edge_weights":[n_layers], "atoms_weight": [5]}
+            self.qnode = qml.QNode(circuit, device, interface="torch")
+            weights_shape = {
+                "params": [2 * n_layers, 3],
+                "edge_weights": [n_layers],
+                "atoms_weight": [5]}
 
             self.qnode_weights = self.init_weight(weights_shape)
-            
-            self.qlayer = qml.qnn.TorchLayer(self.qnode, weights_shape)
 
             self.fc1 = nn.Linear(1, 2)
             self.fc2 = nn.Linear(2, 1)
         def forward(self, batch):
-            # print(batch)
             results = []
             for i in range(len(batch)):
                 g = batch[i]
-                # print(g)
                 exps = self.qnode(g, **self.qnode_weights)
                 exps = torch.stack(exps).float()
-                # print(exps)
-                # assert exps.shape == (g.num_atoms
                 avgs = torch.mean(exps, axis=0, keepdim=True)
                 results.append(avgs)
-            x = torch.stack(results)    
+            x = torch.stack(results)
             x = F.relu(self.fc1(x))
             x = self.fc2(x)
             return x
@@ -222,8 +227,7 @@ else:
     # %%
     model = QuantumGNN('global', max_nodes)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    
-    n_params = sum([p.numel() for p in model.parameters()]) - 26  # todo fix this. Remove doublecheck of the params
+    n_params = sum([p.numel() for p in model.parameters()])
     print("number of parameters is ", n_params)
 
 
@@ -243,9 +247,6 @@ run = wandb.init(
     },
     save_code=True)
 wandb.run.log_code("src")
-# %%
-from tqdm.auto import tqdm 
-import os
 
 run_id = wandb.run.name[wandb.run.name.rfind("-")+1:]
 chkp_folder = f"output/logs/{'q' if quantum else 'c'}_{n_params}p_wandb_id={wandb.run.name}"
@@ -275,7 +276,6 @@ for epoch in tqdm(range(0, num_epochs)):
         total_loss += loss.item()
     avg_loss_test = total_loss / len(test_dataloader)
 
-
     wandb.log({"epoch": epoch+1, "loss": avg_loss, "test_loss": avg_loss_test})
     torch.save(model.state_dict(), os.path.join(chkp_folder, f'chpt_{epoch+1}.pth'))
 
@@ -283,7 +283,6 @@ for epoch in tqdm(range(0, num_epochs)):
 # %%
 # ## Predictions visualization
 
-from sklearn.metrics import r2_score
 
 # batch_size = 1
 # dataloader = DataLoader(filtered_dataset, batch_size=batch_size, shuffle=True)
