@@ -82,11 +82,6 @@ for data in filtered_dataset:
     data.y = (data.y - mean)/std
 
 
-# %% [markdown]
-# Model with global readout.
-
-# %%
-
 # %%
 
 
@@ -255,30 +250,32 @@ os.makedirs(chkp_folder, exist_ok=False)
 
 # Training loop
 num_epochs = 300
-for epoch in tqdm(range(0, num_epochs)):
-    model.train()
-    total_loss = 0
-    for data in dataloader:
-        optimizer.zero_grad()
-        output = model(data)
-        loss = criterion(output, data.y[:, args.feature_idx:args.feature_idx+1].float())
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item()
-    avg_loss = total_loss / len(dataloader)
-
-    model.eval()
-    total_loss = 0
-    for data in test_dataloader:
-        with torch.no_grad():
+try:
+    for epoch in tqdm(range(0, num_epochs)):
+        model.train()
+        total_loss = 0
+        for data in dataloader:
+            optimizer.zero_grad()
             output = model(data)
             loss = criterion(output, data.y[:, args.feature_idx:args.feature_idx+1].float())
-        total_loss += loss.item()
-    avg_loss_test = total_loss / len(test_dataloader)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+        avg_loss = total_loss / len(dataloader)
 
-    wandb.log({"epoch": epoch+1, "loss": avg_loss, "test_loss": avg_loss_test})
-    torch.save(model.state_dict(), os.path.join(chkp_folder, f'chpt_{epoch+1}.pth'))
+        model.eval()
+        total_loss = 0
+        for data in test_dataloader:
+            with torch.no_grad():
+                output = model(data)
+                loss = criterion(output, data.y[:, args.feature_idx:args.feature_idx+1].float())
+            total_loss += loss.item()
+        avg_loss_test = total_loss / len(test_dataloader)
 
+        wandb.log({"epoch": epoch+1, "loss": avg_loss, "test_loss": avg_loss_test})
+        torch.save(model.state_dict(), os.path.join(chkp_folder, f'chpt_{epoch+1}.pth'))
+except KeyboardInterrupt:
+    print("Interrupting training and computing metrics")
 
 # %%
 # ## Predictions visualization
