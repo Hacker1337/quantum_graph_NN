@@ -9,7 +9,6 @@ from torch_geometric.datasets import QM9
 from torch_geometric.loader import DataLoader
 import torch
 from torch import nn
-import dotenv
 import wandb
 import os
 from math import floor
@@ -52,9 +51,6 @@ num_epochs = args.num_epochs
 quantum = args.quantum
 n_layers = args.model_n_layers
 
-dotenv.read_dotenv("wandb.env")
-
-wandb.login(key=os.environ["api_key"])
 wandb_prj_name = "graphQNN"
 
 # ## Dataset preprocessing
