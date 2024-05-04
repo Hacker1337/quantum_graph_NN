@@ -1,4 +1,20 @@
-В sota статье по QM9 датасету. homo, lumo and gap (2, 3, 4)
+# Equivariant Quantum Graph Neural Network for Small Molecules 
+
+This repository show the code to reproduce training and testing of Quantum Graph Neural Network to predict properties of small molecules. Our model is compared with the similar classical Graph Neural Network.
+
+Code can be run as a py file (`src/train.py`) and configured with command line arguments
+
+
+There are 2 available models: quantum and classical GNN, that can be chosen by setting `--quantum` to `true` or `false`.
+
+
+`--feature_idx` parameter defines which property of molecules from QM9 dataset will the model train to predict. We used `4` which is  $\Delta \epsilon$ -- difference between HOMO and LUMO energies.
+
+
+Interactive run logs here https://wandb.ai/amirfvb/graphQNN
+
+
+<!-- В sota статье по QM9 датасету. homo, lumo and gap (2, 3, 4)
 
 
   ---------------------------------------------------------------------------------------------------------------
@@ -46,4 +62,4 @@
   17       $B$                          Rotational constant               $\textrm{GHz}$
 
   18       $C$                          Rotational constant               $\textrm{GHz}$
-  ---------------------------------------------------------------------------------------------------------------
+  --------------------------------------------------------------------------------------------------------------- -->

@@ -34,12 +34,13 @@ def str2bool(v):
 
 parser.add_argument('--lr', default=0.01)
 parser.add_argument('--batch_size', type=int, default=1)
-parser.add_argument('--num_epochs', type=int, default=300)
+parser.add_argument('--num_epochs', type=int, default=100)
 parser.add_argument('--feature_idx', type=int, default=2)
 parser.add_argument('--quantum', type=str2bool, default=True)
-parser.add_argument('--dataset_frac', type=float, default=0.67,
+parser.add_argument('--dataset_frac', type=float, default=1,
                     help="Fraction of the train dataset to use")
 parser.add_argument('--model_params_seed', type=int, default=0)
+parser.add_argument('--model_n_layers', type=int, default=3)
 parser.add_argument('--dataset_reduce_seed', type=int, default=42)
 parser.add_argument('--tr_test_split_seed', type=int, default=42)
 
@@ -49,7 +50,7 @@ lr = args.lr
 batch_size = args.batch_size
 num_epochs = args.num_epochs
 quantum = args.quantum
-
+n_layers = args.model_n_layers
 
 dotenv.read_dotenv("wandb.env")
 
@@ -165,9 +166,9 @@ if quantum:
 
     def parametrised_rotations(angles, wires):
         for w in wires:
-            qml.Rot(*angles, w)
+            qml.RY(*angles, w)
+        
 
-    n_layers = 3
     model_params["n_layers"] = n_layers
 
     def circuit(inputs, params, edge_weights, atoms_weight: list[5]):
@@ -198,7 +199,7 @@ if quantum:
             device = qml.device("lightning.qubit", wires=max_qubits)
             self.qnode = qml.QNode(circuit, device, interface="torch")
             weights_shape = {
-                "params": [2 * n_layers, 3],
+                "params": [2 * n_layers, 1],
                 "edge_weights": [n_layers],
                 "atoms_weight": [5]}
 
@@ -249,7 +250,6 @@ chkp_folder = f"output/logs/{'q' if quantum else 'c'}_{n_params}p_wandb_id={wand
 os.makedirs(chkp_folder, exist_ok=False)
 
 # Training loop
-num_epochs = 300
 try:
     for epoch in tqdm(range(0, num_epochs)):
         model.train()
